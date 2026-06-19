@@ -34,7 +34,7 @@ command, then collect:
 | Command | What it does |
 |---|---|
 | `/lunch` · `/lunch <meal>` | Start a poll now (any configured meal, e.g. `dinner`, `coffee`) |
-| `/lunch stats` | Most-picked and best-rated places |
+| `/lunch stats` | Most-picked, best-rated, and voter turnout (with a gentle roast for the least-active voter) |
 | `/lunch list` | All places — score /10 · cuisine · price · meal |
 | `/lunch add <name>` | Add a place (auto-detects cuisine & price) |
 | `/lunch discover <cuisine\|price\|area>` | Propose new spots, each with an ➕ Add button (opt-in) |
@@ -89,7 +89,7 @@ python -m lunchbot.backfill --channel C0XXXXXXX
 
 ```bash
 pip install -r requirements-dev.txt
-pytest        # 61 tests
+pytest        # 65 tests
 ruff check .
 ```
 

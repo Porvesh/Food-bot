@@ -338,6 +338,59 @@ def test_stats_reports_winner_after_close():
     assert "Most picked" in text
 
 
+def test_voter_participation_counts_distinct_closed_polls():
+    db = Database(":memory:")
+    a, b = db.upsert_place("A"), db.upsert_place("B")
+    # Poll 1 (will close): U1 votes for both places — still counts as one poll.
+    db.create_poll("lunch", TODAY.isoformat(), [a, b], TODAY.isoformat())
+    db.ensure_user("U1", "Alice")
+    db.ensure_user("U2", "Bob")
+    db.cast_vote(1, "U1", a)
+    db.cast_vote(1, "U1", b)
+    db.mark_poll_closed(1, a)
+    # Poll 2 stays OPEN: a vote here must NOT count toward turnout.
+    db.create_poll("lunch", TODAY.isoformat(), [a], TODAY.isoformat())
+    db.cast_vote(2, "U1", a)
+
+    part = {r["display"]: r["polls_voted"] for r in db.voter_participation()}
+    assert part["Alice"] == 1   # two places + an open poll still = 1 closed poll
+    assert part["Bob"] == 0     # known (rated/seen) but never voted
+
+
+def test_stats_roasts_the_least_active_voter():
+    svc = _service([(f"P{i}", "both") for i in range(1, 5)])
+    # Alice votes in the poll; Bob is known but sits it out.
+    poll_id = svc.post_picks("lunch", TODAY)
+    cands = svc.db.poll_candidates(svc.db.get_poll(poll_id))
+    svc.handle_vote(poll_id, "U1", cands[0], "Alice")
+    svc.db.ensure_user("U2", "Bob")
+    svc.close_poll(poll_id)
+
+    text = sa._stats_text(svc.db)
+    assert "Least likely to vote" in text
+    assert "<@U2>" in text   # the slacker is @-mentioned by Slack id
+    assert "haha" in text
+
+
+def test_stats_skips_roast_when_nobody_voted():
+    svc = _service([(f"P{i}", "both") for i in range(1, 5)])
+    poll_id = svc.post_picks("lunch", TODAY)
+    svc.close_poll(poll_id)  # closed with zero votes
+    text = sa._stats_text(svc.db)
+    assert "Least likely to vote" not in text
+
+
+def test_stats_no_roast_when_everyone_voted_equally():
+    svc = _service([(f"P{i}", "both") for i in range(1, 5)])
+    poll_id = svc.post_picks("lunch", TODAY)
+    cands = svc.db.poll_candidates(svc.db.get_poll(poll_id))
+    svc.handle_vote(poll_id, "U1", cands[0], "Alice")
+    svc.handle_vote(poll_id, "U2", cands[0], "Bob")
+    svc.close_poll(poll_id)
+    text = sa._stats_text(svc.db)
+    assert "Least likely to vote" not in text  # no roast — it's a tie
+
+
 # -- discover ----------------------------------------------------------------
 
 def test_discover_proposes_without_inserting():

@@ -285,7 +285,24 @@ def _stats_text(db) -> str:
             n = r["num_ratings"]
             lines.append(f"• *{r['name']}* — {avg:.1f}/10 ({n} rating{'s' if n != 1 else ''})")
 
+    lines.extend(_turnout_lines(db, closed))
+
     return "\n".join(lines)
+
+
+def _turnout_lines(db, closed: int) -> list[str]:
+    """A light-hearted roast of whoever's voted in the fewest polls. Fires only
+    when there's a real gap between the keenest and laziest voter, so it stays
+    quiet when nobody's voted yet or everyone's voted the same amount."""
+    rows = db.voter_participation()
+    if len(rows) < 2:
+        return []
+    laziest = rows[-1]
+    if laziest["polls_voted"] >= rows[0]["polls_voted"]:
+        return []
+    n = laziest["polls_voted"]
+    tail = "hasn't voted *once* 💀" if n == 0 else f"only voted in *{n}/{closed}*"
+    return [f"\n😴 *Least likely to vote:* <@{laziest['slack_id']}> — {tail}. haha"]
 
 
 def _discover(poll, db, query, respond):

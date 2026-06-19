@@ -338,6 +338,22 @@ class Database:
         ).fetchall()
         return {int(r["place_id"]): int(r["n"]) for r in rows}
 
+    def voter_participation(self) -> list[sqlite3.Row]:
+        """Per-user voting turnout: how many distinct *closed* polls each known
+        user has voted in (a poll counts once no matter how many places they
+        picked in it). Includes known users who never voted (polls_voted = 0).
+        Ordered most-active first, ties broken by name."""
+        return self.conn.execute(
+            """SELECT u.slack_id                      AS slack_id,
+                      COALESCE(u.display, u.slack_id) AS display,
+                      COUNT(DISTINCT p.id)            AS polls_voted
+               FROM users u
+               LEFT JOIN votes v ON v.slack_id = u.slack_id
+               LEFT JOIN polls p ON p.id = v.poll_id AND p.closed = 1
+               GROUP BY u.slack_id
+               ORDER BY polls_voted DESC, display COLLATE NOCASE"""
+        ).fetchall()
+
     # -- ratings --------------------------------------------------------------
 
     def record_rating(self, poll_id: int, slack_id: str, place_id: int, value: float) -> None:
