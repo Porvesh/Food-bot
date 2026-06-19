@@ -71,13 +71,24 @@ def register_handlers(app: App, poll: PollService) -> App:
                 respond("Usage: `/lunch add <name>`")
                 return
             place_id = db.upsert_place(name, source="manual")
-            respond(f"Added *{name}* (place #{place_id}). Set a score with `/lunch score {name} <0-10>`.")
+            # Best-effort auto-fill cuisine/price (fills only empty fields).
+            enriched = poll.claude.enrich(name)
+            if enriched:
+                db.enrich_place(place_id, enriched.get("cuisine"), enriched.get("price_band"))
+            row = db.get_place(place_id)
+            detail = _meta_suffix(row)
+            respond(
+                f"Added *{name}* (place #{place_id}){detail}. "
+                f"Set a score with `/lunch score {name} <0-10>`."
+            )
         elif sub == "remove" and arg:
             _deactivate_by_name(db, _clean_name(arg), respond)
         elif sub == "list":
             respond(_place_list(db))
         elif sub == "score":
             _set_score(db, arg, respond)
+        elif sub == "cuisine":
+            _set_cuisine(db, arg, respond)
         else:
             respond(_help_text())
 
@@ -124,6 +135,32 @@ def _deactivate_by_name(db, name, respond):
         respond(f"Couldn't find a place matching *{name}*.")
 
 
+def _meta_suffix(row) -> str:
+    """' — mexican · $$' style suffix from whatever metadata a place has."""
+    bits = []
+    if row["cuisine"]:
+        bits.append(row["cuisine"])
+    if row["price_band"]:
+        bits.append("$" * int(row["price_band"]))
+    return f" — {' · '.join(bits)}" if bits else ""
+
+
+def _set_cuisine(db, arg, respond):
+    """`/lunch cuisine <name> <cuisine>` — manual override for a place's cuisine."""
+    tokens = arg.split()
+    if len(tokens) < 2:
+        respond("Usage: `/lunch cuisine <name> <cuisine>` (e.g. `/lunch cuisine Thai Basil thai`)")
+        return
+    cuisine = tokens[-1].lower()
+    name = _clean_name(" ".join(tokens[:-1]))
+    row = db.find_place(name)
+    if row is None:
+        respond(f"No place matching *{name}*. See `/lunch list`.")
+        return
+    db.set_place_cuisine(int(row["id"]), cuisine)
+    respond(f"Set *{row['name']}* cuisine to *{cuisine}*.")
+
+
 def _score_out_of_10(row) -> Optional[float]:
     """The place's score on a 0..10 scale: the team-set score if present, else
     the rolled-up rating average, else None (unrated)."""
@@ -140,12 +177,14 @@ def _place_list(db) -> str:
     ).fetchall()
     if not rows:
         return "No places yet. Add one with `/lunch add <name>`."
-    lines = ["*Places*  _(score out of 10 · meal)_"]
+    lines = ["*Places*  _(score /10 · cuisine · price · meal)_"]
     for r in rows:
         score = _score_out_of_10(r)
         score_str = f"{score:.1f}" if score is not None else "—"
+        cuisine = r["cuisine"] or "—"
+        price = "$" * int(r["price_band"]) if r["price_band"] else "—"
         meal = r["meal"] or "both"
-        lines.append(f"• *{r['name']}* — {score_str}/10 · {meal}")
+        lines.append(f"• *{r['name']}* — {score_str}/10 · {cuisine} · {price} · {meal}")
     return "\n".join(lines)
 
 
@@ -189,8 +228,9 @@ def _help_text() -> str:
     return (
         "*Lunch Bot commands*\n"
         "• `/lunch` or `/lunch dinner` — start a poll now\n"
-        "• `/lunch list` — show all places, their score, and meal\n"
-        "• `/lunch add <name>` — add a place\n"
+        "• `/lunch list` — show all places, score, cuisine, price, meal\n"
+        "• `/lunch add <name>` — add a place (auto-detects cuisine & price)\n"
         "• `/lunch score <name> <0-10> [lunch|dinner|both]` — set a place's score & meal\n"
+        "• `/lunch cuisine <name> <cuisine>` — fix a place's cuisine\n"
         "• `/lunch remove <name>` — stop suggesting a place"
     )

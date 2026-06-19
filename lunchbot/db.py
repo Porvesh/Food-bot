@@ -131,6 +131,25 @@ class Database:
             "SELECT * FROM places WHERE canonical_key = ?", (canonical_key(name),)
         ).fetchone()
 
+    def enrich_place(
+        self, place_id: int, cuisine: Optional[str] = None, price_band: Optional[int] = None
+    ) -> None:
+        """Fill cuisine/price_band only where they are currently NULL, so an
+        auto-enrichment never overwrites a value a human set on purpose."""
+        self.conn.execute(
+            "UPDATE places SET cuisine = COALESCE(cuisine, ?), "
+            "price_band = COALESCE(price_band, ?) WHERE id = ?",
+            (cuisine, price_band, place_id),
+        )
+        self.conn.commit()
+
+    def set_place_cuisine(self, place_id: int, cuisine: Optional[str]) -> None:
+        """Explicit override (used by the manual-correction command)."""
+        self.conn.execute(
+            "UPDATE places SET cuisine = ? WHERE id = ?", (cuisine, place_id)
+        )
+        self.conn.commit()
+
     def set_manual_score(self, place_id: int, score: Optional[float]) -> None:
         self.conn.execute(
             "UPDATE places SET manual_score = ? WHERE id = ?", (score, place_id)

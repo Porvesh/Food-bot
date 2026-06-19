@@ -19,6 +19,15 @@ PITCH_SYSTEM = (
     "people want to vote for it. No emoji, no quotes, no trailing period needed."
 )
 
+ENRICH_SYSTEM = (
+    "You label restaurants for a lunch bot. Given a restaurant name, return JSON "
+    "only (no prose): "
+    '{"cuisine": <one lowercase word like "thai", "ramen", "mexican", "salad", '
+    'or null if you truly cannot tell>, "price_band": <1-4 where 1=$ cheap and '
+    '4=$$$$ fancy, or null if unsure>}. '
+    "Use your general knowledge of well-known places; guess null rather than invent."
+)
+
 
 class ClaudeClient:
     def __init__(self, api_key: str, model: str) -> None:
@@ -55,6 +64,36 @@ class ClaudeClient:
         except Exception as exc:  # pragma: no cover - network/credential issues
             log.warning("Pitch generation failed (%s); using fallback.", exc)
             return fallback
+
+    def enrich(self, name: str) -> dict:
+        """Best-effort {cuisine, price_band} for a restaurant name.
+
+        Returns {} when Claude is disabled or the call fails, so callers can
+        treat enrichment as purely additive (the place still gets added).
+        """
+        if not self._client:
+            return {}
+        try:
+            msg = self._client.messages.create(
+                model=self.model,
+                max_tokens=60,
+                system=ENRICH_SYSTEM,
+                messages=[{"role": "user", "content": f"Name: {name}"}],
+            )
+            text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+            data = json.loads(text)
+        except Exception as exc:  # pragma: no cover - network/credential/parse issues
+            log.warning("Enrichment failed for %r (%s); leaving fields blank.", name, exc)
+            return {}
+
+        out: dict = {}
+        cuisine = data.get("cuisine")
+        if isinstance(cuisine, str) and cuisine.strip():
+            out["cuisine"] = cuisine.strip().lower()
+        band = data.get("price_band")
+        if isinstance(band, int) and 1 <= band <= 4:
+            out["price_band"] = band
+        return out
 
     def extract_places(self, messages: list[dict]) -> list[dict]:
         """Backfill helper: extract restaurant mentions from channel history.
