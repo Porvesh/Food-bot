@@ -50,6 +50,7 @@ class PollService:
             last_visit=row["last_visit"],
             sum_ratings=row["sum_ratings"],
             num_ratings=row["num_ratings"],
+            manual_score=row["manual_score"],
         )
 
     def _tunables(self) -> rec.Tunables:
@@ -61,7 +62,12 @@ class PollService:
         )
 
     def select_candidates(self, slot: str, on_date: date) -> list[rec.Scored]:
-        places = [self._to_engine_place(r) for r in self.db.active_places()]
+        # A place only appears in a poll for its meal ('both' fits either slot).
+        places = [
+            self._to_engine_place(r)
+            for r in self.db.active_places()
+            if (r["meal"] or "both") in (slot, "both")
+        ]
         roster = self.db.present_roster(on_date.isoformat(), slot)
         return rec.recommend(
             places,

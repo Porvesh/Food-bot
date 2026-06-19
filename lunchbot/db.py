@@ -35,14 +35,54 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self._init_schema()
+        self._migrate()
 
     def _init_schema(self) -> None:
         schema = resources.files("lunchbot").joinpath("schema.sql").read_text()
         self.conn.executescript(schema)
         self.conn.commit()
 
+    def _migrate(self) -> None:
+        """Add columns to an already-created DB. CREATE TABLE IF NOT EXISTS won't
+        alter an existing table, so new columns are added idempotently here."""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(places)")}
+        if "manual_score" not in cols:
+            self.conn.execute("ALTER TABLE places ADD COLUMN manual_score REAL")
+        if "meal" not in cols:
+            self.conn.execute("ALTER TABLE places ADD COLUMN meal TEXT DEFAULT 'both'")
+        self.conn.commit()
+
     def close(self) -> None:
         self.conn.close()
+
+    def backup(self, retain: int = 14) -> Optional[str]:
+        """Write a consistent snapshot using SQLite's online-backup API (safe to
+        run while the bot is live). Snapshots land next to the DB as
+        <name>.YYYY-MM-DD.bak; older ones beyond `retain` are pruned. Returns the
+        snapshot path, or None for an in-memory DB."""
+        if self.path == ":memory:":
+            return None
+        base = os.path.basename(self.path)
+        backup_dir = os.path.join(os.path.dirname(self.path) or ".", "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        stamp = date_cls.today().isoformat()
+        dest_path = os.path.join(backup_dir, f"{base}.{stamp}.bak")
+        with sqlite3.connect(dest_path) as dest:
+            self.conn.backup(dest)
+        self._prune_backups(backup_dir, base, retain)
+        return dest_path
+
+    @staticmethod
+    def _prune_backups(backup_dir: str, base: str, retain: int) -> None:
+        snaps = sorted(
+            f for f in os.listdir(backup_dir)
+            if f.startswith(f"{base}.") and f.endswith(".bak")
+        )
+        for stale in snaps[:-retain] if retain > 0 else []:
+            try:
+                os.remove(os.path.join(backup_dir, stale))
+            except OSError:
+                pass
 
     # -- places ---------------------------------------------------------------
 
@@ -83,6 +123,22 @@ class Database:
             "UPDATE places SET is_active = ? WHERE id = ?",
             (1 if active else 0, place_id),
         )
+        self.conn.commit()
+
+    def find_place(self, name: str) -> Optional[sqlite3.Row]:
+        """Look up a place by name (canonical-key match), active or not."""
+        return self.conn.execute(
+            "SELECT * FROM places WHERE canonical_key = ?", (canonical_key(name),)
+        ).fetchone()
+
+    def set_manual_score(self, place_id: int, score: Optional[float]) -> None:
+        self.conn.execute(
+            "UPDATE places SET manual_score = ? WHERE id = ?", (score, place_id)
+        )
+        self.conn.commit()
+
+    def set_place_meal(self, place_id: int, meal: str) -> None:
+        self.conn.execute("UPDATE places SET meal = ? WHERE id = ?", (meal, place_id))
         self.conn.commit()
 
     def global_like_rate(self, fallback: float = 0.6) -> float:

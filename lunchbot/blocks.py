@@ -9,32 +9,22 @@ from __future__ import annotations
 
 from typing import Optional
 
-SLOT_EMOJI = {"lunch": "🥗", "dinner": "🍝"}
-
-
-def _stars(sum_ratings: float, num_ratings: int) -> str:
-    if num_ratings == 0:
-        return "no ratings yet"
-    avg = sum_ratings / num_ratings
-    return f"⭐ {avg * 5:.1f} ({num_ratings})"
-
 
 def candidate_card(place: dict, pitch: str, votes: int, *, closed: bool, is_winner: bool) -> list[dict]:
-    """One restaurant card. `place` is a sqlite3.Row-like mapping."""
-    cuisine = place["cuisine"] or "—"
-    title = place["name"]
+    """One restaurant card: name (+ cuisine) and a Vote button showing the count."""
+    cuisine = place["cuisine"]
+    name = place["name"]
+    title = f"*{name}*" + (f"  ·  {cuisine}" if cuisine else "")
     if is_winner:
-        title = f"🏆 *{title}*"
-    count = f"  ·  *{votes}* vote{'s' if votes != 1 else ''}" if votes else ""
-    lines = (
-        f"*{title}*  ·  {cuisine}  ·  {_stars(place['sum_ratings'], place['num_ratings'])}\n"
-        f"_{pitch}_{count}"
-    )
-    section = {"type": "section", "text": {"type": "mrkdwn", "text": lines}}
-    if not closed:
+        title = f"🏆  {title}"
+
+    section: dict = {"type": "section", "text": {"type": "mrkdwn", "text": title}}
+    if closed:
+        section["text"]["text"] += f"\n{votes} vote" + ("" if votes == 1 else "s")
+    else:
         section["accessory"] = {
             "type": "button",
-            "text": {"type": "plain_text", "text": f"Vote ({votes})"},
+            "text": {"type": "plain_text", "text": f"Vote · {votes}"},
             "action_id": "vote",
             "value": str(place["id"]),
         }
@@ -49,13 +39,12 @@ def poll_message(
     winner_id: Optional[int] = None,
 ) -> list[dict]:
     """Full poll message. `cards` is a list of (place, pitch, votes)."""
-    emoji = SLOT_EMOJI.get(slot, "🍽️")
     if closed and winner_id is not None:
-        header = f"{emoji} {slot.title()} — winner is in!"
+        header = f"{slot.title()} — winner"
     elif closed:
-        header = f"{emoji} {slot.title()} — poll closed"
+        header = f"{slot.title()} — closed"
     else:
-        header = f"{emoji} Where should we go for {slot}?"
+        header = f"Where should we go for {slot}?"
 
     blocks: list[dict] = [
         {"type": "header", "text": {"type": "plain_text", "text": header}},
@@ -63,15 +52,6 @@ def poll_message(
     for place, pitch, votes in cards:
         blocks += candidate_card(
             place, pitch, votes, closed=closed, is_winner=(place["id"] == winner_id)
-        )
-    if not closed:
-        blocks.append(
-            {
-                "type": "context",
-                "elements": [
-                    {"type": "mrkdwn", "text": "One vote each — change it any time before the poll closes."}
-                ],
-            }
         )
     return blocks
 
@@ -93,14 +73,14 @@ def rating_message(place_name: str, poll_id: int, place_id: int) -> list[dict]:
             "elements": [
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "👍 Good"},
+                    "text": {"type": "plain_text", "text": "👍"},
                     "style": "primary",
                     "action_id": "rate_up",
                     "value": value,
                 },
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "👎 Meh"},
+                    "text": {"type": "plain_text", "text": "👎"},
                     "action_id": "rate_down",
                     "value": value,
                 },
@@ -113,6 +93,6 @@ def rating_done_message(place_name: str) -> list[dict]:
     return [
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": f"Thanks — noted how *{place_name}* went. 🙏"},
+            "text": {"type": "mrkdwn", "text": f"Thanks — noted how *{place_name}* went."},
         }
     ]

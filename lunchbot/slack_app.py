@@ -9,6 +9,7 @@ for a single-team workload.
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from slack_bolt import App
 
@@ -17,7 +18,7 @@ from .poll import PollService
 
 log = logging.getLogger(__name__)
 
-PREFS = ["vegetarian", "vegan", "halal", "gluten_free"]
+MEALS = ("lunch", "dinner", "both")
 
 
 def create_app(config: Config) -> App:
@@ -60,30 +61,23 @@ def register_handlers(app: App, poll: PollService) -> App:
         parts = text.split(maxsplit=1)
         sub = parts[0].lower() if parts else ""
         arg = parts[1] if len(parts) > 1 else ""
-        user_id = body["user_id"]
 
         if sub in ("", "lunch", "dinner"):
             slot = sub or "lunch"
             poll.post_picks(slot)
         elif sub == "add" and arg:
-            place_id = db.upsert_place(arg, source="manual")
-            respond(f"Added *{arg}* (place #{place_id}). It'll show up via exploration.")
+            name = _clean_name(arg)
+            if not name:
+                respond("Usage: `/lunch add <name>`")
+                return
+            place_id = db.upsert_place(name, source="manual")
+            respond(f"Added *{name}* (place #{place_id}). Set a score with `/lunch score {name} <0-10>`.")
         elif sub == "remove" and arg:
-            _deactivate_by_name(db, arg, respond)
-        elif sub == "skip":
-            from datetime import date
-            db.ensure_user(user_id, body.get("user_name"))
-            for slot in ("lunch", "dinner"):
-                db.set_attendance(user_id, date.today().isoformat(), slot, present=False)
-            respond("Got it — you're out for today's polls. 🙅")
-        elif sub == "in":
-            from datetime import date
-            db.ensure_user(user_id, body.get("user_name"))
-            for slot in ("lunch", "dinner"):
-                db.set_attendance(user_id, date.today().isoformat(), slot, present=True)
-            respond("You're in for today. 🙌")
-        elif sub == "prefs":
-            _toggle_pref(db, user_id, body.get("user_name"), arg, respond)
+            _deactivate_by_name(db, _clean_name(arg), respond)
+        elif sub == "list":
+            respond(_place_list(db))
+        elif sub == "score":
+            _set_score(db, arg, respond)
         else:
             respond(_help_text())
 
@@ -91,6 +85,14 @@ def register_handlers(app: App, poll: PollService) -> App:
 
 
 # -- helpers -----------------------------------------------------------------
+
+def _clean_name(raw: str) -> str:
+    """A restaurant name is a single line. Guard against pasted multi-line text
+    (e.g. a name with the next slash command glued on) by keeping the first line
+    and collapsing internal whitespace."""
+    first_line = raw.splitlines()[0] if raw.splitlines() else ""
+    return " ".join(first_line.split())
+
 
 def _poll_id_from_message(db, body) -> int | None:
     """Map the clicked message back to its poll via the stored Slack ts."""
@@ -122,32 +124,73 @@ def _deactivate_by_name(db, name, respond):
         respond(f"Couldn't find a place matching *{name}*.")
 
 
-def _toggle_pref(db, user_id, user_name, arg, respond):
-    db.ensure_user(user_id, user_name)
-    arg = arg.strip().lower()
-    if not arg:
-        current = db.constraints_for([user_id])
-        active = ", ".join(sorted(current)) or "none"
-        respond(
-            f"Your dietary constraints: *{active}*.\n"
-            f"Toggle one with `/lunch prefs <{' | '.join(PREFS)}>`."
-        )
+def _score_out_of_10(row) -> Optional[float]:
+    """The place's score on a 0..10 scale: the team-set score if present, else
+    the rolled-up rating average, else None (unrated)."""
+    if row["manual_score"] is not None:
+        return float(row["manual_score"])
+    if row["num_ratings"]:
+        return float(row["sum_ratings"]) / float(row["num_ratings"]) * 10.0
+    return None
+
+
+def _place_list(db) -> str:
+    rows = db.conn.execute(
+        "SELECT * FROM places WHERE is_active = 1 ORDER BY name COLLATE NOCASE"
+    ).fetchall()
+    if not rows:
+        return "No places yet. Add one with `/lunch add <name>`."
+    lines = ["*Places*  _(score out of 10 · meal)_"]
+    for r in rows:
+        score = _score_out_of_10(r)
+        score_str = f"{score:.1f}" if score is not None else "—"
+        meal = r["meal"] or "both"
+        lines.append(f"• *{r['name']}* — {score_str}/10 · {meal}")
+    return "\n".join(lines)
+
+
+def _set_score(db, arg, respond):
+    """`/lunch score <name> <0-10> [lunch|dinner|both]`."""
+    tokens = arg.split()
+    if len(tokens) < 2:
+        respond("Usage: `/lunch score <name> <0-10> [lunch|dinner|both]`")
         return
-    if arg not in PREFS:
-        respond(f"Unknown constraint. Options: {', '.join(PREFS)}")
+
+    # An optional trailing meal keyword; everything before the number is the name.
+    meal = None
+    if tokens[-1].lower() in MEALS:
+        meal = tokens[-1].lower()
+        tokens = tokens[:-1]
+
+    try:
+        value = float(tokens[-1])
+    except ValueError:
+        respond("Score must be a number 0–10, e.g. `/lunch score Chipotle 8`.")
         return
-    currently = arg in db.constraints_for([user_id])
-    db.set_constraint(user_id, arg, enabled=not currently)
-    state = "removed" if currently else "added"
-    respond(f"{state.title()} dietary constraint *{arg}*.")
+    if not 0 <= value <= 10:
+        respond("Score must be between 0 and 10.")
+        return
+
+    name = _clean_name(" ".join(tokens[:-1]))
+    row = db.find_place(name)
+    if row is None:
+        respond(f"No place matching *{name}*. See `/lunch list` or add it with `/lunch add {name}`.")
+        return
+
+    db.set_manual_score(int(row["id"]), value)
+    msg = f"Scored *{row['name']}* at *{value:.1f}/10*."
+    if meal:
+        db.set_place_meal(int(row["id"]), meal)
+        msg += f" Shows up for *{meal}*."
+    respond(msg)
 
 
 def _help_text() -> str:
     return (
         "*Lunch Bot commands*\n"
         "• `/lunch` or `/lunch dinner` — start a poll now\n"
+        "• `/lunch list` — show all places, their score, and meal\n"
         "• `/lunch add <name>` — add a place\n"
-        "• `/lunch remove <name>` — stop suggesting a place\n"
-        "• `/lunch prefs [vegetarian|vegan|halal|gluten_free]` — view/toggle constraints\n"
-        "• `/lunch skip` / `/lunch in` — opt out / in for today"
+        "• `/lunch score <name> <0-10> [lunch|dinner|both]` — set a place's score & meal\n"
+        "• `/lunch remove <name>` — stop suggesting a place"
     )

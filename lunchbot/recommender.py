@@ -27,6 +27,9 @@ class Place:
     last_visit: Optional[str] = None  # ISO date
     sum_ratings: float = 0.0
     num_ratings: int = 0
+    # Team-set score on a 0..10 scale. When present it overrides the learned
+    # rating_quality, so an explicitly-scored place ranks by that score.
+    manual_score: Optional[float] = None
     # Cuisines this place can NOT accommodate (drives hard-constraint filtering).
     # e.g. {"vegetarian"} means "no vegetarian option here".
     cannot_accommodate: frozenset[str] = field(default_factory=frozenset)
@@ -135,7 +138,10 @@ def score_place(
     user_cuisine_stats: dict[str, dict[str, tuple[float, int]]],
     user_means: dict[str, float],
 ) -> Scored:
-    rq = bayesian_quality(place.sum_ratings, place.num_ratings, tunables.prior_m, global_c)
+    if place.manual_score is not None:
+        rq = place.manual_score / 10.0  # team-set score takes precedence
+    else:
+        rq = bayesian_quality(place.sum_ratings, place.num_ratings, tunables.prior_m, global_c)
     gf = group_fit(place, roster, user_cuisine_stats, user_means, tunables.prior_m)
     rec = recency_factor(place.last_visit, today, tunables.recency_halflife_days)
     exp = explore_bonus(place.times_picked, tunables.explore_k)

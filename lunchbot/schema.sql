@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS places (
     last_visit    TEXT,                    -- ISO date of last win, nullable
     sum_ratings   REAL DEFAULT 0,          -- sum of rating values (0..1 each)
     num_ratings   INTEGER DEFAULT 0,       -- # of ratings collected
+    manual_score  REAL,                    -- team-set score 0..10 (overrides ratings when set)
+    meal          TEXT DEFAULT 'both',     -- lunch | dinner | both (which polls it can appear in)
     source        TEXT DEFAULT 'history',  -- history | places_api | manual
     created_at    TEXT DEFAULT (datetime('now'))
 );

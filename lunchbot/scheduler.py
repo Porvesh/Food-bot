@@ -46,6 +46,12 @@ class Scheduler:
                 args=["dinner"], id="post_dinner", replace_existing=True,
             )
             log.info("Scheduled dinner poll at %02d:%02d %s", h, m, cfg.tz)
+        # Nightly DB snapshot at 03:00 (data/backups/, 14 kept).
+        self.sched.add_job(
+            self._backup, CronTrigger(hour=3, minute=0),
+            id="nightly_backup", replace_existing=True,
+        )
+        log.info("Scheduled nightly DB backup at 03:00 %s", cfg.tz)
         self.sched.start()
 
     # -- callbacks wired into PollService ------------------------------------
@@ -72,6 +78,13 @@ class Scheduler:
 
     def _rate(self, poll_id: int) -> None:
         self._poll.post_rating_prompt(poll_id)
+
+    def _backup(self) -> None:
+        try:
+            path = self._poll.db.backup()
+            log.info("DB backup written to %s", path)
+        except Exception:
+            log.exception("Nightly DB backup failed")
 
     def shutdown(self) -> None:
         self.sched.shutdown(wait=False)
