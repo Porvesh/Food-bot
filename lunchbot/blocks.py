@@ -7,6 +7,7 @@ encodings here are the contract the Slack handlers in slack_app.py depend on.
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 
@@ -64,6 +65,37 @@ def poll_message(
                         "action_id": "reroll",
                     }
                 ],
+            }
+        )
+    return blocks
+
+
+def discover_message(query: str, suggestions: list[dict]) -> list[dict]:
+    """Proposed spots from /lunch discover. Each has an Add button -- nothing is
+    saved until the user explicitly taps it."""
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*Ideas for “{query}”* — tap ➕ to add one:"},
+        }
+    ]
+    for s in suggestions:
+        bits = []
+        if s.get("cuisine"):
+            bits.append(s["cuisine"])
+        if s.get("price_band"):
+            bits.append("$" * int(s["price_band"]))
+        meta = f"  ·  {' · '.join(bits)}" if bits else ""
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*{s['name']}*{meta}"},
+                "accessory": {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "➕ Add"},
+                    "action_id": "discover_add",
+                    "value": json.dumps(s)[:1900],
+                },
             }
         )
     return blocks

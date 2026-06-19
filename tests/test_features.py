@@ -1,6 +1,7 @@
 """Unit tests for the post-MVP features: manual scores, meal filtering,
 cuisine/price enrichment, the nightly backup, and the slash-command helpers."""
 
+import json
 from datetime import date
 
 from lunchbot import slack_app as sa
@@ -53,7 +54,11 @@ def _service(places):
 
 def _capture():
     out = []
-    return out, (lambda m: out.append(m))
+
+    def respond(*args, **kwargs):
+        out.append(kwargs if kwargs else (args[0] if args else None))
+
+    return out, respond
 
 
 # -- recommender: manual score overrides learned quality ---------------------
@@ -284,7 +289,7 @@ def test_stats_reports_winner_after_close():
 
 # -- discover ----------------------------------------------------------------
 
-def test_discover_inserts_new_places():
+def test_discover_proposes_without_inserting():
     class DiscoverClaude(FakeClaude):
         enabled = True
         def discover(self, query, limit=8):
@@ -294,9 +299,21 @@ def test_discover_inserts_new_places():
     poll = PollService(db, Config(), FakeSlack(), DiscoverClaude(), lambda *a: None)
     out, respond = _capture()
     sa._discover(poll, db, "cheap asian", respond)
-    assert db.find_place("Pho King")["cuisine"] == "vietnamese"
-    assert db.find_place("Burrito Bros") is not None
-    assert "Added 2 spots" in out[-1]
+    # Nothing saved -- discover only proposes.
+    assert db.find_place("Pho King") is None
+    assert db.find_place("Burrito Bros") is None
+    # Response carries Add buttons for each suggestion.
+    blocks = out[-1]["blocks"]
+    actions = [b for b in blocks if b.get("accessory", {}).get("action_id") == "discover_add"]
+    assert len(actions) == 2
+
+
+def test_discover_message_has_add_buttons():
+    from lunchbot.blocks import discover_message
+    blocks = discover_message("thai", [{"name": "Pok Pok", "cuisine": "thai", "price_band": 2}])
+    btn = blocks[1]["accessory"]
+    assert btn["action_id"] == "discover_add"
+    assert json.loads(btn["value"])["name"] == "Pok Pok"
 
 
 def test_discover_needs_query():

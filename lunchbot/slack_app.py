@@ -8,10 +8,13 @@ for a single-team workload.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
 from slack_bolt import App
+
+from .blocks import discover_message
 
 from .config import Config
 from .poll import PollService
@@ -46,6 +49,24 @@ def register_handlers(app: App, poll: PollService) -> App:
         poll_id = _poll_id_from_message(db, body)
         if poll_id is not None:
             poll.reroll(poll_id)
+
+    @app.action("discover_add")
+    def on_discover_add(ack, action, respond):
+        ack()
+        try:
+            item = json.loads(action["value"])
+        except (ValueError, KeyError):
+            return
+        name = _clean_name(item.get("name", ""))
+        if not name:
+            return
+        pid = db.upsert_place(name, cuisine=item.get("cuisine"), source="discover")
+        db.enrich_place(pid, item.get("cuisine"), item.get("price_band"))
+        respond(
+            text=f"Added *{name}*{_meta_suffix(db.get_place(pid))}.",
+            replace_original=False,
+            response_type="ephemeral",
+        )
 
     # -- rating --------------------------------------------------------------
 
@@ -283,19 +304,8 @@ def _discover(poll, db, query, respond):
     if not found:
         respond(f"Couldn't find new spots for *{query}*. Try different wording?")
         return
-    added = []
-    for item in found:
-        name = _clean_name(item.get("name", ""))
-        if not name:
-            continue
-        pid = db.upsert_place(name, cuisine=item.get("cuisine"), source="discover")
-        db.enrich_place(pid, item.get("cuisine"), item.get("price_band"))
-        added.append(name)
-    if not added:
-        respond(f"Nothing new to add for *{query}*.")
-        return
-    listed = "\n".join(f"• {n}" for n in added)
-    respond(f"Added {len(added)} spot{'s' if len(added) != 1 else ''} to explore:\n{listed}")
+    # Propose only -- nothing is saved until the user taps a place's ➕ Add button.
+    respond(text=f"Ideas for {query}", blocks=discover_message(query, found))
 
 
 def _help_text() -> str:
