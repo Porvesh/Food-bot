@@ -33,16 +33,18 @@ command, then collect:
 
 | Command | What it does |
 |---|---|
-| `/lunch` · `/lunch dinner` | Start a poll now |
+| `/lunch` · `/lunch <meal>` | Start a poll now (any configured meal, e.g. `dinner`, `coffee`) |
 | `/lunch stats` | Most-picked and best-rated places |
 | `/lunch list` | All places — score /10 · cuisine · price · meal |
 | `/lunch add <name>` | Add a place (auto-detects cuisine & price) |
-| `/lunch discover <cuisine\|price\|area>` | Propose new spots to add (opt-in) |
-| `/lunch score <name> <0-10> [lunch\|dinner\|both]` | Set a place's score & meal |
+| `/lunch discover <cuisine\|price\|area>` | Propose new spots, each with an ➕ Add button (opt-in) |
+| `/lunch score <name> <0-10> [<meal>\|both]` | Set a place's score & which meal it's for |
 | `/lunch cuisine <name> <cuisine>` | Fix a place's cuisine |
 | `/lunch remove <name>` | Stop suggesting a place |
 
-Polls carry **🗳️ Vote** and **🔄 Reroll** buttons; the post-meal prompt is one-tap **👍/👎**.
+Voting is **multi-select** — tap 🗳️ Vote on as many places as you like, tap again to
+undo. Polls also carry a **🔄 Reroll** button for fresh options; the post-meal prompt
+is one-tap **👍/👎**.
 
 ## How it ranks
 
@@ -87,7 +89,7 @@ python -m lunchbot.backfill --channel C0XXXXXXX
 
 ```bash
 pip install -r requirements-dev.txt
-pytest        # 56 tests
+pytest        # 61 tests
 ruff check .
 ```
 
