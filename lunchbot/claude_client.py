@@ -13,6 +13,20 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
+
+def _loads_json(text: str):
+    """Parse JSON from a model reply, tolerating ```json ... ``` code fences."""
+    t = text.strip()
+    if t.startswith("```"):
+        t = t[3:]
+        if t[:4].lower() == "json":
+            t = t[4:]
+        if t.endswith("```"):
+            t = t[:-3]
+        t = t.strip()
+    return json.loads(t)
+
+
 PITCH_SYSTEM = (
     "You write one-line lunch pitches for a team poll. Given a restaurant name "
     "and cuisine, return a single playful sentence (max 12 words) that makes "
@@ -81,7 +95,7 @@ class ClaudeClient:
                 messages=[{"role": "user", "content": f"Name: {name}"}],
             )
             text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-            data = json.loads(text)
+            data = _loads_json(text)
         except Exception as exc:  # pragma: no cover - network/credential/parse issues
             log.warning("Enrichment failed for %r (%s); leaving fields blank.", name, exc)
             return {}
@@ -114,7 +128,7 @@ class ClaudeClient:
                 messages=[{"role": "user", "content": query}],
             )
             text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-            data = json.loads(text)
+            data = _loads_json(text)
         except Exception as exc:  # pragma: no cover - network/credential/parse issues
             log.warning("Discovery failed for %r (%s).", query, exc)
             return []
@@ -157,7 +171,7 @@ class ClaudeClient:
                 messages=[{"role": "user", "content": payload}],
             )
             text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-            return json.loads(text)
+            return _loads_json(text)
         except Exception as exc:  # pragma: no cover
             log.warning("History extraction failed: %s", exc)
             return []

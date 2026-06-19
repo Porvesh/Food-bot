@@ -139,6 +139,24 @@ def test_enrich_disabled_returns_empty():
     assert ClaudeClient("", "x").enrich("Chipotle") == {}
 
 
+def test_loads_json_strips_markdown_fence():
+    from lunchbot.claude_client import _loads_json
+    assert _loads_json('```json\n[{"name":"X"}]\n```') == [{"name": "X"}]
+    assert _loads_json('```\n{"a": 1}\n```') == {"a": 1}
+    assert _loads_json('{"a": 1}') == {"a": 1}
+
+
+def test_enrich_handles_fenced_response():
+    assert _stub_claude('```json\n{"cuisine":"thai","price_band":1}\n```').enrich("X") == {
+        "cuisine": "thai", "price_band": 1
+    }
+
+
+def test_discover_parses_fenced_list():
+    c = _stub_claude('```json\n[{"name":"Pho 1","cuisine":"vietnamese","price_band":2}]\n```')
+    assert c.discover("pho") == [{"name": "Pho 1", "cuisine": "vietnamese", "price_band": 2}]
+
+
 def test_enrich_bad_json_returns_empty():
     assert _stub_claude("sorry, no idea").enrich("X") == {}
 
