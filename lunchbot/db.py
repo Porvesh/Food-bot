@@ -252,6 +252,16 @@ class Database:
         self.conn.execute("UPDATE polls SET ts = ? WHERE id = ?", (ts, poll_id))
         self.conn.commit()
 
+    def set_poll_candidates(self, poll_id: int, candidates: list[int]) -> None:
+        self.conn.execute(
+            "UPDATE polls SET candidates = ? WHERE id = ?", (json.dumps(candidates), poll_id)
+        )
+        self.conn.commit()
+
+    def clear_votes(self, poll_id: int) -> None:
+        self.conn.execute("DELETE FROM votes WHERE poll_id = ?", (poll_id,))
+        self.conn.commit()
+
     def get_poll(self, poll_id: int) -> Optional[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM polls WHERE id = ?", (poll_id,)).fetchone()
 

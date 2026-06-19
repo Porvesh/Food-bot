@@ -40,6 +40,7 @@ class Tunables:
     prior_m: float = 8.0
     explore_k: float = 0.3
     recency_halflife_days: float = 7.0
+    cooldown_days: int = 1
 
 
 @dataclass
@@ -80,6 +81,18 @@ def recency_factor(last_visit: Optional[str], today: date, halflife_days: float)
 def explore_bonus(times_picked: int, explore_k: float) -> float:
     """A poor-man's UCB: large for untried places, decaying as they're sampled."""
     return explore_k / math.sqrt(times_picked + 1)
+
+
+def within_cooldown(last_visit: Optional[str], today: date, cooldown_days: int) -> bool:
+    """True if the place was visited within the last `cooldown_days` days -- used
+    as a hard floor so we don't re-suggest yesterday's spot."""
+    if not last_visit or cooldown_days <= 0:
+        return False
+    try:
+        days = (today - date.fromisoformat(last_visit)).days
+    except ValueError:
+        return False
+    return days < cooldown_days
 
 
 def user_pref(
@@ -158,6 +171,7 @@ def recommend(
     active_constraints: set[str] | None = None,
     user_cuisine_stats: dict[str, dict[str, tuple[float, int]]] | None = None,
     user_means: dict[str, float] | None = None,
+    exclude_ids: set[int] | None = None,
     n: int = 3,
 ) -> list[Scored]:
     """Return n picks: the top scorers plus one exploratory pick from the tail.
@@ -174,6 +188,17 @@ def recommend(
         for p in places
         if p.is_active and not violates_hard_constraint(p, active_constraints)
     ]
+    # Hard cooldown: drop places visited within cooldown_days -- but only if
+    # enough fresh places remain to still fill the poll, so a small roster of
+    # places never leaves us with nothing to suggest.
+    fresh = [p for p in eligible if not within_cooldown(p.last_visit, today, tunables.cooldown_days)]
+    if len(fresh) >= n:
+        eligible = fresh
+    # Reroll: prefer places not already shown, as long as enough remain.
+    if exclude_ids:
+        pruned = [p for p in eligible if p.id not in exclude_ids]
+        if len(pruned) >= n:
+            eligible = pruned
     scored = [
         score_place(
             p,

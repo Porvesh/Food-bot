@@ -27,6 +27,9 @@ class Tunables:
     recency_halflife_days: float = field(
         default_factory=lambda: float(os.getenv("RECO_RECENCY_HALFLIFE_DAYS", "7"))
     )
+    # Hard floor: never re-suggest a place visited within this many days (as long
+    # as enough other places remain to fill the poll).
+    cooldown_days: int = field(default_factory=lambda: int(os.getenv("RECO_COOLDOWN_DAYS", "1")))
 
 
 @dataclass(frozen=True)

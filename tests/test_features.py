@@ -203,3 +203,87 @@ def test_meta_suffix_formats_cuisine_and_price():
     pid = db.upsert_place("P")
     db.enrich_place(pid, cuisine="ramen", price_band=3)
     assert sa._meta_suffix(db.get_place(pid)) == " — ramen · $$$"
+
+
+# -- recency cooldown --------------------------------------------------------
+
+def test_within_cooldown():
+    from lunchbot.recommender import within_cooldown
+    assert within_cooldown(TODAY.isoformat(), TODAY, 1) is True       # visited today
+    assert within_cooldown(date(2026, 6, 17).isoformat(), TODAY, 1) is False  # 2 days ago
+    assert within_cooldown(None, TODAY, 1) is False                   # never visited
+    assert within_cooldown(TODAY.isoformat(), TODAY, 0) is False      # cooldown off
+
+
+def test_cooldown_excludes_recent_when_alternatives_exist():
+    from lunchbot.recommender import recommend
+    recent = Place(id=1, name="Yesterday", cuisine="thai", last_visit=TODAY.isoformat())
+    others = [Place(id=i, name=f"P{i}", cuisine="thai") for i in range(2, 6)]
+    picks = recommend([recent] + others, ["U1"], today=TODAY, global_c=0.6, tunables=TUN)
+    assert all(s.place.id != 1 for s in picks)
+
+
+def test_cooldown_relaxes_when_too_few_places():
+    from lunchbot.recommender import recommend
+    # All three visited today; cooldown must relax or there'd be nothing to poll.
+    places = [Place(id=i, name=f"P{i}", cuisine="thai", last_visit=TODAY.isoformat())
+              for i in range(1, 4)]
+    picks = recommend(places, ["U1"], today=TODAY, global_c=0.6, tunables=TUN)
+    assert len(picks) == 3
+
+
+# -- reroll ------------------------------------------------------------------
+
+def test_reroll_gives_fresh_candidates_and_clears_votes():
+    svc = _service([(f"P{i}", "both") for i in range(1, 7)])  # 6 places
+    poll_id = svc.post_picks("lunch", TODAY)
+    original = set(svc.db.poll_candidates(svc.db.get_poll(poll_id)))
+    svc.handle_vote(poll_id, "U1", next(iter(original)))
+    assert svc.db.vote_tally(poll_id)  # a vote exists
+
+    svc.reroll(poll_id)
+    new = set(svc.db.poll_candidates(svc.db.get_poll(poll_id)))
+    assert new.isdisjoint(original)        # entirely fresh options
+    assert svc.db.vote_tally(poll_id) == {}  # votes reset
+
+
+# -- stats -------------------------------------------------------------------
+
+def test_stats_empty_before_any_poll():
+    assert "No polls" in sa._stats_text(Database(":memory:"))
+
+
+def test_stats_reports_winner_after_close():
+    svc = _service([(f"P{i}", "both") for i in range(1, 5)])
+    poll_id = svc.post_picks("lunch", TODAY)
+    cands = svc.db.poll_candidates(svc.db.get_poll(poll_id))
+    svc.handle_vote(poll_id, "U1", cands[0])
+    svc.close_poll(poll_id)
+    text = sa._stats_text(svc.db)
+    assert "1 poll closed" in text
+    assert "Most picked" in text
+
+
+# -- discover ----------------------------------------------------------------
+
+def test_discover_inserts_new_places():
+    class DiscoverClaude(FakeClaude):
+        enabled = True
+        def discover(self, query, limit=8):
+            return [{"name": "Pho King", "cuisine": "vietnamese", "price_band": 2},
+                    {"name": "Burrito Bros", "cuisine": "mexican"}]
+    db = Database(":memory:")
+    poll = PollService(db, Config(), FakeSlack(), DiscoverClaude(), lambda *a: None)
+    out, respond = _capture()
+    sa._discover(poll, db, "cheap asian", respond)
+    assert db.find_place("Pho King")["cuisine"] == "vietnamese"
+    assert db.find_place("Burrito Bros") is not None
+    assert "Added 2 spots" in out[-1]
+
+
+def test_discover_needs_query():
+    db = Database(":memory:")
+    poll = PollService(db, Config(), FakeSlack(), FakeClaude(), lambda *a: None)
+    out, respond = _capture()
+    sa._discover(poll, db, "  ", respond)
+    assert "Usage" in out[-1]

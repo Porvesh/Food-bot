@@ -53,6 +53,19 @@ def poll_message(
         blocks += candidate_card(
             place, pitch, votes, closed=closed, is_winner=(place["id"] == winner_id)
         )
+    if not closed:
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "🔄 Reroll"},
+                        "action_id": "reroll",
+                    }
+                ],
+            }
+        )
     return blocks
 
 

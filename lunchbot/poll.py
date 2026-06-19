@@ -59,9 +59,12 @@ class PollService:
             prior_m=t.prior_m,
             explore_k=t.explore_k,
             recency_halflife_days=t.recency_halflife_days,
+            cooldown_days=t.cooldown_days,
         )
 
-    def select_candidates(self, slot: str, on_date: date) -> list[rec.Scored]:
+    def select_candidates(
+        self, slot: str, on_date: date, exclude_ids: Optional[set[int]] = None
+    ) -> list[rec.Scored]:
         # A place only appears in a poll for its meal ('both' fits either slot).
         places = [
             self._to_engine_place(r)
@@ -78,6 +81,7 @@ class PollService:
             active_constraints=self.db.constraints_for(roster),
             user_cuisine_stats=self.db.cuisine_ratings_by_user(),
             user_means=self.db.user_mean_rating(),
+            exclude_ids=exclude_ids,
         )
 
     # -- post ----------------------------------------------------------------
@@ -115,6 +119,32 @@ class PollService:
         self.schedule_close(poll_id, close_at)
         log.info("Posted %s poll #%d, closes at %s", slot, poll_id, close_at.isoformat())
         return poll_id
+
+    # -- reroll --------------------------------------------------------------
+
+    def reroll(self, poll_id: int) -> None:
+        """Re-pick three fresh candidates for an open poll, preferring places not
+        already shown. Clears existing votes and re-renders the same message."""
+        poll = self.db.get_poll(poll_id)
+        if poll is None or poll["closed"]:
+            return
+        current = set(self.db.poll_candidates(poll))
+        picks = self.select_candidates(
+            poll["slot"], date.fromisoformat(poll["date"]), exclude_ids=current
+        )
+        if not picks:
+            return
+        new_ids = [s.place.id for s in picks]
+        self.db.set_poll_candidates(poll_id, new_ids)
+        self.db.clear_votes(poll_id)
+
+        pitches: dict[int, str] = {}
+        for s in picks:
+            row = self.db.get_place(s.place.id)
+            pitches[row["id"]] = self.claude.pitch(row["name"], row["cuisine"])
+        self._pitch_cache[poll_id] = pitches
+        self._rerender_poll(poll_id)
+        log.info("Rerolled poll #%d -> %s", poll_id, new_ids)
 
     # -- vote ----------------------------------------------------------------
 

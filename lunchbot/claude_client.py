@@ -95,6 +95,44 @@ class ClaudeClient:
             out["price_band"] = band
         return out
 
+    def discover(self, query: str, limit: int = 8) -> list[dict]:
+        """Propose real restaurants matching a free-text request (cuisine, price,
+        area). Returns a list of {name, cuisine, price_band}; [] on failure."""
+        if not self._client:
+            return []
+        system = (
+            "You suggest real, well-known restaurants for a team lunch bot. Given a "
+            f"request, return JSON only: a list of up to {limit} objects "
+            '{"name": str, "cuisine": <one lowercase word>, "price_band": <1-4>}. '
+            "Only real places that plausibly match. No prose, no duplicates."
+        )
+        try:
+            msg = self._client.messages.create(
+                model=self.model,
+                max_tokens=600,
+                system=system,
+                messages=[{"role": "user", "content": query}],
+            )
+            text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+            data = json.loads(text)
+        except Exception as exc:  # pragma: no cover - network/credential/parse issues
+            log.warning("Discovery failed for %r (%s).", query, exc)
+            return []
+        out = []
+        for item in data if isinstance(data, list) else []:
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            entry = {"name": name}
+            cuisine = item.get("cuisine")
+            if isinstance(cuisine, str) and cuisine.strip():
+                entry["cuisine"] = cuisine.strip().lower()
+            band = item.get("price_band")
+            if isinstance(band, int) and 1 <= band <= 4:
+                entry["price_band"] = band
+            out.append(entry)
+        return out
+
     def extract_places(self, messages: list[dict]) -> list[dict]:
         """Backfill helper: extract restaurant mentions from channel history.
 

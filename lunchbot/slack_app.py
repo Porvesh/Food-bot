@@ -40,6 +40,13 @@ def register_handlers(app: App, poll: PollService) -> App:
         user = body["user"]
         poll.handle_vote(poll_id, user["id"], int(action["value"]), user.get("username"))
 
+    @app.action("reroll")
+    def on_reroll(ack, body):
+        ack()
+        poll_id = _poll_id_from_message(db, body)
+        if poll_id is not None:
+            poll.reroll(poll_id)
+
     # -- rating --------------------------------------------------------------
 
     @app.action("rate_up")
@@ -89,6 +96,10 @@ def register_handlers(app: App, poll: PollService) -> App:
             _set_score(db, arg, respond)
         elif sub == "cuisine":
             _set_cuisine(db, arg, respond)
+        elif sub == "stats":
+            respond(_stats_text(db))
+        elif sub == "discover":
+            _discover(poll, db, arg, respond)
         else:
             respond(_help_text())
 
@@ -224,13 +235,79 @@ def _set_score(db, arg, respond):
     respond(msg)
 
 
+def _stats_text(db) -> str:
+    """Make the learning visible: polls run, most-picked, best-rated."""
+    closed = db.conn.execute("SELECT COUNT(*) AS c FROM polls WHERE closed = 1").fetchone()["c"]
+    if not closed:
+        return "No polls have closed yet — run `/lunch` to start one."
+
+    lines = [f"*Lunch Bot stats* — {closed} poll{'s' if closed != 1 else ''} closed"]
+
+    most_picked = db.conn.execute(
+        "SELECT name, times_picked, sum_ratings, num_ratings FROM places "
+        "WHERE times_picked > 0 ORDER BY times_picked DESC, name COLLATE NOCASE LIMIT 5"
+    ).fetchall()
+    if most_picked:
+        lines.append("\n🏆 *Most picked*")
+        for r in most_picked:
+            score = (
+                f"{r['sum_ratings'] / r['num_ratings'] * 10:.1f}/10"
+                if r["num_ratings"] else "unrated"
+            )
+            lines.append(f"• *{r['name']}* — won {r['times_picked']}× · {score}")
+
+    best = db.conn.execute(
+        "SELECT name, sum_ratings, num_ratings FROM places WHERE num_ratings > 0 "
+        "ORDER BY (sum_ratings / num_ratings) DESC, num_ratings DESC LIMIT 5"
+    ).fetchall()
+    if best:
+        lines.append("\n❤️ *Best rated*")
+        for r in best:
+            avg = r["sum_ratings"] / r["num_ratings"] * 10
+            n = r["num_ratings"]
+            lines.append(f"• *{r['name']}* — {avg:.1f}/10 ({n} rating{'s' if n != 1 else ''})")
+
+    return "\n".join(lines)
+
+
+def _discover(poll, db, query, respond):
+    """`/lunch discover <cuisine / price / area>` — ask Claude for new spots."""
+    query = query.strip()
+    if not query:
+        respond("Usage: `/lunch discover <what you want>` — e.g. `/lunch discover cheap thai near downtown`")
+        return
+    if not poll.claude.enabled:
+        respond("Discovery needs an Anthropic key set in the bot's config.")
+        return
+    found = poll.claude.discover(query)
+    if not found:
+        respond(f"Couldn't find new spots for *{query}*. Try different wording?")
+        return
+    added = []
+    for item in found:
+        name = _clean_name(item.get("name", ""))
+        if not name:
+            continue
+        pid = db.upsert_place(name, cuisine=item.get("cuisine"), source="discover")
+        db.enrich_place(pid, item.get("cuisine"), item.get("price_band"))
+        added.append(name)
+    if not added:
+        respond(f"Nothing new to add for *{query}*.")
+        return
+    listed = "\n".join(f"• {n}" for n in added)
+    respond(f"Added {len(added)} spot{'s' if len(added) != 1 else ''} to explore:\n{listed}")
+
+
 def _help_text() -> str:
     return (
         "*Lunch Bot commands*\n"
         "• `/lunch` or `/lunch dinner` — start a poll now\n"
+        "• `/lunch stats` — most-picked & best-rated places\n"
         "• `/lunch list` — show all places, score, cuisine, price, meal\n"
         "• `/lunch add <name>` — add a place (auto-detects cuisine & price)\n"
+        "• `/lunch discover <cuisine|price|area>` — find new spots to try\n"
         "• `/lunch score <name> <0-10> [lunch|dinner|both]` — set a place's score & meal\n"
         "• `/lunch cuisine <name> <cuisine>` — fix a place's cuisine\n"
-        "• `/lunch remove <name>` — stop suggesting a place"
+        "• `/lunch remove <name>` — stop suggesting a place\n"
+        "_Polls also have a 🔄 Reroll button for fresh options._"
     )
