@@ -39,7 +39,7 @@ class Config:
     channel_id: str = field(default_factory=lambda: os.getenv("LUNCH_CHANNEL_ID", ""))
     anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
     anthropic_model: str = field(
-        default_factory=lambda: os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+        default_factory=lambda: os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
     )
 
     tz: str = field(default_factory=lambda: os.getenv("TZ", "America/Los_Angeles"))
