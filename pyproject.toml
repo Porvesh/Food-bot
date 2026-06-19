@@ -21,6 +21,9 @@ include = ["lunchbot*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put the repo root on sys.path so `pytest` (console script) imports the
+# lunchbot package the same way `python -m pytest` does -- keeps CI green.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
