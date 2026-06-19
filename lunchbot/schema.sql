@@ -48,13 +48,14 @@ CREATE TABLE IF NOT EXISTS polls (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
--- One row per vote (latest wins per user per poll via upsert).
+-- One row per (user, place) vote. Multi-select: a user may vote for several
+-- places in a poll, and each Vote tap toggles that place on/off.
 CREATE TABLE IF NOT EXISTS votes (
     poll_id  INTEGER,
     slack_id TEXT,
     place_id INTEGER,
     voted_at TEXT DEFAULT (datetime('now')),
-    PRIMARY KEY (poll_id, slack_id)
+    PRIMARY KEY (poll_id, slack_id, place_id)
 );
 
 -- One row per rating (post-meal thumbs).

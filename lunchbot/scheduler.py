@@ -18,7 +18,9 @@ from .config import Config
 log = logging.getLogger(__name__)
 
 # How long after a close to ask "how was it?" -- enough time to actually eat.
+# Per-meal overrides; anything else uses DEFAULT_RATING_DELAY.
 RATING_DELAY_MINUTES = {"lunch": 150, "dinner": 720}  # 2.5h later / next morning-ish
+DEFAULT_RATING_DELAY = 150
 
 
 class Scheduler:
@@ -32,20 +34,12 @@ class Scheduler:
 
     def start(self) -> None:
         cfg = self.config
-        if cfg.lunch_enabled:
-            h, m = cfg.parse_time(cfg.lunch_time)
+        for meal in cfg.meals:
             self.sched.add_job(
-                self._post, CronTrigger(day_of_week="mon-fri", hour=h, minute=m),
-                args=["lunch"], id="post_lunch", replace_existing=True,
+                self._post, CronTrigger(day_of_week="mon-fri", hour=meal.hour, minute=meal.minute),
+                args=[meal.name], id=f"post_{meal.name}", replace_existing=True,
             )
-            log.info("Scheduled lunch poll at %02d:%02d %s", h, m, cfg.tz)
-        if cfg.dinner_enabled:
-            h, m = cfg.parse_time(cfg.dinner_time)
-            self.sched.add_job(
-                self._post, CronTrigger(day_of_week="mon-fri", hour=h, minute=m),
-                args=["dinner"], id="post_dinner", replace_existing=True,
-            )
-            log.info("Scheduled dinner poll at %02d:%02d %s", h, m, cfg.tz)
+            log.info("Scheduled %s poll at %02d:%02d %s", meal.name, meal.hour, meal.minute, cfg.tz)
         # Nightly DB snapshot at 03:00 (data/backups/, 14 kept).
         self.sched.add_job(
             self._backup, CronTrigger(hour=3, minute=0),
@@ -70,7 +64,7 @@ class Scheduler:
         self._poll.close_poll(poll_id)
         poll = self._poll.db.get_poll(poll_id)
         if poll and poll["winner_id"] is not None:
-            delay = RATING_DELAY_MINUTES.get(poll["slot"], 150)
+            delay = RATING_DELAY_MINUTES.get(poll["slot"], DEFAULT_RATING_DELAY)
             self.sched.add_job(
                 self._rate, "date", run_date=datetime.now() + timedelta(minutes=delay),
                 args=[poll_id], id=f"rate_{poll_id}", replace_existing=True,

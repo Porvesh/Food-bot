@@ -188,10 +188,13 @@ def test_score_out_of_10_prefers_manual_then_ratings():
     assert sa._score_out_of_10(db.get_place(pid)) == 7.0       # manual wins
 
 
+MEALS = {"lunch", "dinner", "both"}
+
+
 def test_set_score_rejects_unknown_place():
     db = Database(":memory:")
     out, respond = _capture()
-    sa._set_score(db, "Ghost Diner 8", respond)
+    sa._set_score(db, "Ghost Diner 8", respond, MEALS)
     assert "No place matching" in out[-1]
 
 
@@ -199,7 +202,7 @@ def test_set_score_sets_value_and_meal():
     db = Database(":memory:")
     db.upsert_place("Pizza Place")
     out, respond = _capture()
-    sa._set_score(db, "Pizza Place 9 dinner", respond)
+    sa._set_score(db, "Pizza Place 9 dinner", respond, MEALS)
     row = db.find_place("Pizza Place")
     assert row["manual_score"] == 9.0
     assert row["meal"] == "dinner"
@@ -209,7 +212,7 @@ def test_set_score_rejects_out_of_range():
     db = Database(":memory:")
     db.upsert_place("P")
     out, respond = _capture()
-    sa._set_score(db, "P 50", respond)
+    sa._set_score(db, "P 50", respond, MEALS)
     assert "between 0 and 10" in out[-1]
 
 
@@ -226,6 +229,54 @@ def test_meta_suffix_formats_cuisine_and_price():
     pid = db.upsert_place("P")
     db.enrich_place(pid, cuisine="ramen", price_band=3)
     assert sa._meta_suffix(db.get_place(pid)) == " — ramen · $$$"
+
+
+# -- configurable meals ------------------------------------------------------
+
+def test_parse_meals():
+    from lunchbot.config import _parse_meals
+    meals = _parse_meals("breakfast@08:30, coffee@10:00 , dinner@18:00")
+    assert [(m.name, m.hour, m.minute) for m in meals] == [
+        ("breakfast", 8, 30), ("coffee", 10, 0), ("dinner", 18, 0)
+    ]
+
+
+def test_meals_default_lunch_and_dinner(monkeypatch):
+    from lunchbot import config
+    for v in ["MEALS", "BREAKFAST_ENABLED", "COFFEE_ENABLED", "SNACK_ENABLED",
+              "LUNCH_ENABLED", "DINNER_ENABLED"]:
+        monkeypatch.delenv(v, raising=False)
+    names = [m.name for m in config._load_meals()]
+    assert names == ["lunch", "dinner"]
+
+
+def test_meals_toggle_via_env(monkeypatch):
+    from lunchbot import config
+    monkeypatch.delenv("MEALS", raising=False)
+    monkeypatch.setenv("BREAKFAST_ENABLED", "1")
+    monkeypatch.setenv("COFFEE_ENABLED", "1")
+    monkeypatch.setenv("SNACK_ENABLED", "0")
+    names = [m.name for m in config._load_meals()]
+    assert names == ["breakfast", "coffee", "lunch", "dinner"]  # daily order
+
+
+def test_meals_string_overrides(monkeypatch):
+    from lunchbot import config
+    monkeypatch.setenv("MEALS", "brunch@10:00,supper@19:30")
+    names = [m.name for m in config._load_meals()]
+    assert names == ["brunch", "supper"]
+
+
+# -- multi-vote --------------------------------------------------------------
+
+def test_cast_vote_toggles_and_allows_multiple():
+    db = Database(":memory:")
+    a, b = db.upsert_place("A"), db.upsert_place("B")
+    assert db.cast_vote(1, "U1", a) is True   # vote A
+    assert db.cast_vote(1, "U1", b) is True   # also vote B (multi-select)
+    assert db.vote_tally(1) == {a: 1, b: 1}
+    assert db.cast_vote(1, "U1", a) is False  # toggle A off
+    assert db.vote_tally(1) == {b: 1}
 
 
 # -- recency cooldown --------------------------------------------------------

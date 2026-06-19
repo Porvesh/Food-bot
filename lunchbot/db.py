@@ -50,6 +50,27 @@ class Database:
             self.conn.execute("ALTER TABLE places ADD COLUMN manual_score REAL")
         if "meal" not in cols:
             self.conn.execute("ALTER TABLE places ADD COLUMN meal TEXT DEFAULT 'both'")
+
+        # Multi-vote: rebuild the votes table if it still has the old one-vote-per
+        # -user primary key (poll_id, slack_id) instead of (..., place_id).
+        vote_pk = {r["name"] for r in self.conn.execute("PRAGMA table_info(votes)") if r["pk"]}
+        if vote_pk and vote_pk != {"poll_id", "slack_id", "place_id"}:
+            self.conn.executescript(
+                """
+                ALTER TABLE votes RENAME TO votes_old;
+                CREATE TABLE votes (
+                    poll_id  INTEGER,
+                    slack_id TEXT,
+                    place_id INTEGER,
+                    voted_at TEXT DEFAULT (datetime('now')),
+                    PRIMARY KEY (poll_id, slack_id, place_id)
+                );
+                INSERT OR IGNORE INTO votes (poll_id, slack_id, place_id, voted_at)
+                    SELECT poll_id, slack_id, place_id, voted_at FROM votes_old;
+                DROP TABLE votes_old;
+                CREATE INDEX IF NOT EXISTS idx_votes_poll ON votes (poll_id);
+                """
+            )
         self.conn.commit()
 
     def close(self) -> None:
@@ -289,14 +310,26 @@ class Database:
 
     # -- votes ----------------------------------------------------------------
 
-    def cast_vote(self, poll_id: int, slack_id: str, place_id: int) -> None:
+    def cast_vote(self, poll_id: int, slack_id: str, place_id: int) -> bool:
+        """Toggle a user's vote for a place. Multi-select: a user may vote for
+        several places. Returns True if the vote is now on, False if removed."""
+        existing = self.conn.execute(
+            "SELECT 1 FROM votes WHERE poll_id = ? AND slack_id = ? AND place_id = ?",
+            (poll_id, slack_id, place_id),
+        ).fetchone()
+        if existing:
+            self.conn.execute(
+                "DELETE FROM votes WHERE poll_id = ? AND slack_id = ? AND place_id = ?",
+                (poll_id, slack_id, place_id),
+            )
+            self.conn.commit()
+            return False
         self.conn.execute(
-            """INSERT INTO votes (poll_id, slack_id, place_id) VALUES (?, ?, ?)
-               ON CONFLICT(poll_id, slack_id)
-               DO UPDATE SET place_id = excluded.place_id, voted_at = datetime('now')""",
+            "INSERT INTO votes (poll_id, slack_id, place_id) VALUES (?, ?, ?)",
             (poll_id, slack_id, place_id),
         )
         self.conn.commit()
+        return True
 
     def vote_tally(self, poll_id: int) -> dict[int, int]:
         rows = self.conn.execute(

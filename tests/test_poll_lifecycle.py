@@ -70,13 +70,16 @@ def test_post_creates_poll_and_message(service):
     assert service._sched.scheduled[0][0] == poll_id
 
 
-def test_vote_and_change_vote(service):
+def test_multi_vote_and_toggle(service):
     poll_id = service.post_picks("lunch", date(2026, 6, 18))
     cands = service.db.poll_candidates(service.db.get_poll(poll_id))
     service.handle_vote(poll_id, "U1", cands[0])
     assert service.db.vote_tally(poll_id) == {cands[0]: 1}
-    # Same user votes again -> moves, not adds.
+    # Same user votes a second place -> both count (multi-select).
     service.handle_vote(poll_id, "U1", cands[1])
+    assert service.db.vote_tally(poll_id) == {cands[0]: 1, cands[1]: 1}
+    # Tapping the first place again toggles it off.
+    service.handle_vote(poll_id, "U1", cands[0])
     assert service.db.vote_tally(poll_id) == {cands[1]: 1}
 
 

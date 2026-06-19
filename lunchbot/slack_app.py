@@ -21,8 +21,6 @@ from .poll import PollService
 
 log = logging.getLogger(__name__)
 
-MEALS = ("lunch", "dinner", "both")
-
 
 def create_app(config: Config) -> App:
     """Create the Bolt app so its `client` is available before PollService."""
@@ -90,9 +88,8 @@ def register_handlers(app: App, poll: PollService) -> App:
         sub = parts[0].lower() if parts else ""
         arg = parts[1] if len(parts) > 1 else ""
 
-        if sub in ("", "lunch", "dinner"):
-            slot = sub or "lunch"
-            poll.post_picks(slot)
+        if sub == "" or sub in poll.config.meal_names:
+            poll.post_picks(sub or poll.config.default_meal)
         elif sub == "add" and arg:
             name = _clean_name(arg)
             if not name:
@@ -114,7 +111,7 @@ def register_handlers(app: App, poll: PollService) -> App:
         elif sub == "list":
             respond(_place_list(db))
         elif sub == "score":
-            _set_score(db, arg, respond)
+            _set_score(db, arg, respond, poll.config.meal_names | {"both"})
         elif sub == "cuisine":
             _set_cuisine(db, arg, respond)
         elif sub == "stats":
@@ -220,16 +217,16 @@ def _place_list(db) -> str:
     return "\n".join(lines)
 
 
-def _set_score(db, arg, respond):
-    """`/lunch score <name> <0-10> [lunch|dinner|both]`."""
+def _set_score(db, arg, respond, valid_meals):
+    """`/lunch score <name> <0-10> [<meal>|both]`."""
     tokens = arg.split()
     if len(tokens) < 2:
-        respond("Usage: `/lunch score <name> <0-10> [lunch|dinner|both]`")
+        respond("Usage: `/lunch score <name> <0-10> [<meal>|both]`")
         return
 
     # An optional trailing meal keyword; everything before the number is the name.
     meal = None
-    if tokens[-1].lower() in MEALS:
+    if tokens[-1].lower() in valid_meals:
         meal = tokens[-1].lower()
         tokens = tokens[:-1]
 

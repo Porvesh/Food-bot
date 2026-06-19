@@ -19,6 +19,59 @@ def _flag(name: str, default: str = "1") -> bool:
 
 
 @dataclass(frozen=True)
+class Meal:
+    """A configured poll slot: a name and the time it posts (24h)."""
+
+    name: str
+    hour: int
+    minute: int
+
+
+# Built-in meals, in daily order, with default times and default on/off state.
+# Each is toggled by <NAME>_ENABLED and timed by <NAME>_TIME in the env.
+DEFAULT_MEALS = [
+    ("breakfast", "08:30", "0"),
+    ("coffee", "10:30", "0"),
+    ("lunch", "11:30", "1"),
+    ("snack", "15:30", "0"),
+    ("dinner", "18:00", "1"),
+]
+
+
+def _parse_meals(raw: str) -> tuple[Meal, ...]:
+    """Parse a `MEALS` override like 'breakfast@08:30,lunch@11:00,coffee@15:00'."""
+    meals = []
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        name, _, t = chunk.partition("@")
+        hh, _, mm = t.partition(":")
+        try:
+            meals.append(Meal(name.strip().lower(), int(hh), int(mm or 0)))
+        except ValueError:
+            continue
+    return tuple(meals)
+
+
+def _load_meals() -> tuple[Meal, ...]:
+    """Build the day's meals. A `MEALS` string overrides everything; otherwise
+    each built-in meal is on/off via <NAME>_ENABLED and timed via <NAME>_TIME."""
+    raw = os.getenv("MEALS")
+    if raw:
+        return _parse_meals(raw) or _parse_meals("lunch@11:30,dinner@18:00")
+    meals = []
+    for name, default_time, default_on in DEFAULT_MEALS:
+        if _flag(f"{name.upper()}_ENABLED", default=default_on):
+            hh, _, mm = os.getenv(f"{name.upper()}_TIME", default_time).partition(":")
+            try:
+                meals.append(Meal(name, int(hh), int(mm or 0)))
+            except ValueError:
+                continue
+    return tuple(meals) or _parse_meals("lunch@11:30,dinner@18:00")
+
+
+@dataclass(frozen=True)
 class Tunables:
     """Recommender knobs. Defaults match the spec; override via env."""
 
@@ -43,10 +96,7 @@ class Config:
     )
 
     tz: str = field(default_factory=lambda: os.getenv("TZ", "America/Los_Angeles"))
-    lunch_time: str = field(default_factory=lambda: os.getenv("LUNCH_TIME", "11:00"))
-    dinner_time: str = field(default_factory=lambda: os.getenv("DINNER_TIME", "18:00"))
-    lunch_enabled: bool = field(default_factory=lambda: _flag("LUNCH_ENABLED"))
-    dinner_enabled: bool = field(default_factory=lambda: _flag("DINNER_ENABLED"))
+    meals: tuple[Meal, ...] = field(default_factory=_load_meals)
     poll_minutes: int = field(default_factory=lambda: int(os.getenv("POLL_MINUTES", "10")))
 
     db_path: str = field(default_factory=lambda: os.getenv("DB_PATH", "data/lunchbot.db"))
@@ -71,9 +121,13 @@ class Config:
                 + "\nCopy .env.example to .env and fill them in."
             )
 
-    def parse_time(self, value: str) -> tuple[int, int]:
-        hour, _, minute = value.partition(":")
-        return int(hour), int(minute or 0)
+    @property
+    def meal_names(self) -> set[str]:
+        return {m.name for m in self.meals}
+
+    @property
+    def default_meal(self) -> str:
+        return self.meals[0].name if self.meals else "lunch"
 
 
 def load_config() -> Config:
