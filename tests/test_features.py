@@ -263,8 +263,40 @@ def test_meals_toggle_via_env(monkeypatch):
 def test_meals_string_overrides(monkeypatch):
     from lunchbot import config
     monkeypatch.setenv("MEALS", "brunch@10:00,supper@19:30")
-    names = [m.name for m in config._load_meals()]
-    assert names == ["brunch", "supper"]
+    meals = config._load_meals()
+    assert [m.name for m in meals] == ["brunch", "supper"]
+    # Days default to mon-fri when not specified.
+    assert all(m.days == "mon-fri" for m in meals)
+
+
+def test_meals_string_days_override(monkeypatch):
+    from lunchbot import config
+    # Ranges expand; wrap-around weeks (sun-thu) are handled; lists use + here
+    # because the comma already separates meals.
+    monkeypatch.setenv("MEALS", "lunch@11:00,dinner@18:00@sun-thu,brunch@10:00@sat+sun")
+    meals = {m.name: m for m in config._load_meals()}
+    assert meals["lunch"].days == "mon-fri"                  # default
+    assert meals["dinner"].days == "mon,tue,wed,thu,sun"     # sun-thu wraps
+    assert meals["brunch"].days == "sat,sun"                 # + normalized
+
+
+def test_clean_days_wraparound_and_lists():
+    from lunchbot.config import _clean_days
+    assert _clean_days("") == "mon-fri"                      # blank -> default
+    assert _clean_days("mon-fri") == "mon,tue,wed,thu,fri"
+    assert _clean_days("sun-thu") == "mon,tue,wed,thu,sun"   # wrap-around
+    assert _clean_days("sat+sun") == "sat,sun"               # MEALS list separator
+    assert _clean_days("fri,sat,sun") == "fri,sat,sun"       # already a comma list
+    assert _clean_days("0-4") == "mon,tue,wed,thu,fri"       # numeric
+
+
+def test_meals_toggle_days_via_env(monkeypatch):
+    from lunchbot import config
+    monkeypatch.delenv("MEALS", raising=False)
+    monkeypatch.setenv("DINNER_DAYS", "sun-thu")
+    meals = {m.name: m for m in config._load_meals()}
+    assert meals["dinner"].days == "mon,tue,wed,thu,sun"
+    assert meals["lunch"].days == "mon-fri"                  # default for unscoped meal
 
 
 # -- multi-vote --------------------------------------------------------------

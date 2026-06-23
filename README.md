@@ -64,16 +64,21 @@ key signal: a place that wins votes but earns 👎 quietly drops out.
 
 ## Scheduling
 
-Polls run Mon–Fri at configurable times. Toggle the built-in meals with
+Polls run Mon–Fri by default at configurable times. Toggle the built-in meals with
 `LUNCH_ENABLED`/`DINNER_ENABLED`/`BREAKFAST_ENABLED`/`COFFEE_ENABLED`/`SNACK_ENABLED`
-(+ matching `*_TIME`), or define any set yourself with one line:
+(+ matching `*_TIME`, and `*_DAYS` to scope the days), or define any set yourself
+with one line:
 
 ```
-MEALS=breakfast@08:00,lunch-1@11:00,lunch-2@13:00,coffee@15:30,dinner@18:30
+MEALS=breakfast@08:00,lunch-1@11:00,lunch-2@13:00,coffee@15:30,dinner@18:30@sun-thu
 ```
 
 `MEALS` (when set) is the source of truth — any number of meals, any names, any
-times. A nightly SQLite backup runs at 03:00 → `data/backups/` (14 kept). On
+times. Each meal runs Mon–Fri unless you append `@days`, using
+[APScheduler `day_of_week`](https://apscheduler.readthedocs.io/en/3.x/modules/triggers/cron.html)
+syntax — `mon-fri`, `sun-thu`, `mon-sat`. Commas already split meals, so write
+day *lists* with `+` (e.g. `brunch@10:00@sat+sun`). A nightly SQLite backup runs
+at 03:00 → `data/backups/` (14 kept). On
 restart, open polls are recovered. To run always-on, host the process under
 launchd / a small box (Socket Mode dials out, so no ports to open).
 

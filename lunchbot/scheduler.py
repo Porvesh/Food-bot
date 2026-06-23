@@ -38,10 +38,14 @@ class Scheduler:
             # Index in the id so duplicate names (e.g. three "lunch" slots) each
             # get their own job instead of overwriting one another.
             self.sched.add_job(
-                self._post, CronTrigger(day_of_week="mon-fri", hour=meal.hour, minute=meal.minute),
+                self._post,
+                CronTrigger(day_of_week=meal.days, hour=meal.hour, minute=meal.minute),
                 args=[meal.name], id=f"post_{i}_{meal.name}", replace_existing=True,
             )
-            log.info("Scheduled %s poll at %02d:%02d %s", meal.name, meal.hour, meal.minute, cfg.tz)
+            log.info(
+                "Scheduled %s poll at %02d:%02d %s on %s",
+                meal.name, meal.hour, meal.minute, cfg.tz, meal.days,
+            )
         # Nightly DB snapshot at 03:00 (data/backups/, 14 kept).
         self.sched.add_job(
             self._backup, CronTrigger(hour=3, minute=0),
