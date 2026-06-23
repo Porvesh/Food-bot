@@ -8,6 +8,15 @@ the "learning" is a transparent ranking formula.
 Runs as one process over a Slack **Socket Mode** connection — no public URL, no
 inbound ports.
 
+## Why I built this
+
+At the office, getting a small team fed is a daily scramble: someone has to
+remember to order on time, suggest a place everyone's okay with, and round up
+who's in — and it usually slips until people are already hungry. Lunch Bot takes
+that off everyone's plate: it pings the channel on schedule, suggests places it
+knows the team likes, runs a quick vote, and picks a winner — so nobody has to be
+the one who organizes lunch.
+
 ## Quick start
 
 ```bash
@@ -89,6 +98,18 @@ Seed from an existing channel's history (pull → extract with Claude → dedup 
 ```bash
 python -m lunchbot.backfill --channel C0XXXXXXX
 ```
+
+## Roadmap
+
+**v2 — from picking to ordering.** Today the bot stops at "we're going to X." Next
+it should carry the team all the way to a placed order:
+
+- Ask people to **thread their orders** under the winning poll, and ping anyone who
+  hasn't replied so nobody gets left out.
+- Connect to **DoorDash / Uber Eats** to build a shared cart from those threaded
+  orders and keep it in sync as people add or change items.
+- Hand off a ready-to-checkout cart (or place the group order outright) once
+  everyone's in.
 
 ## Development
 
