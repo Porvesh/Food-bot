@@ -66,15 +66,38 @@ class Scheduler:
         )
 
     def _close(self, poll_id: int) -> None:
-        poll = self._poll.db.get_poll(poll_id)
         self._poll.close_poll(poll_id)
         poll = self._poll.db.get_poll(poll_id)
         if poll and poll["winner_id"] is not None:
+            self._schedule_rating(poll)
+
+    def _schedule_rating(self, poll) -> None:
+        """Register the post-meal rating prompt. `run_date` is timezone-aware so
+        it agrees with the scheduler's zone regardless of the host clock."""
+        delay = RATING_DELAY_MINUTES.get(poll["slot"], DEFAULT_RATING_DELAY)
+        self.sched.add_job(
+            self._rate, "date", run_date=self.config.now() + timedelta(minutes=delay),
+            args=[poll["id"]], id=f"rate_{poll['id']}", replace_existing=True,
+        )
+
+    def recover_pending_ratings(self) -> None:
+        """On boot, re-arm rating prompts for polls that closed with a winner but
+        never got prompted. Rating jobs live only in memory, so a restart between
+        close and prompt would otherwise drop them (spec section 12)."""
+        now = self.config.now()
+        for poll in self._poll.db.polls_awaiting_rating():
+            close_at = self._poll._parse_stored(poll["close_at"], default=now)
             delay = RATING_DELAY_MINUTES.get(poll["slot"], DEFAULT_RATING_DELAY)
-            self.sched.add_job(
-                self._rate, "date", run_date=datetime.now() + timedelta(minutes=delay),
-                args=[poll_id], id=f"rate_{poll_id}", replace_existing=True,
-            )
+            rate_at = close_at + timedelta(minutes=delay)
+            if rate_at <= now:
+                log.info("Recovery: prompting overdue rating for poll #%d", poll["id"])
+                self._rate(poll["id"])
+            else:
+                log.info("Recovery: re-scheduling rating for poll #%d at %s", poll["id"], rate_at)
+                self.sched.add_job(
+                    self._rate, "date", run_date=rate_at,
+                    args=[poll["id"]], id=f"rate_{poll['id']}", replace_existing=True,
+                )
 
     def _rate(self, poll_id: int) -> None:
         self._poll.post_rating_prompt(poll_id)

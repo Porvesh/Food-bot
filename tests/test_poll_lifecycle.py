@@ -11,6 +11,7 @@ import pytest
 from lunchbot.config import Config
 from lunchbot.db import Database
 from lunchbot.poll import PollService
+from lunchbot.scheduler import Scheduler
 
 
 class FakeSlack:
@@ -141,11 +142,53 @@ def test_rating_updates_place_aggregates(service):
 
 def test_recovery_closes_overdue_poll(service):
     poll_id = service.post_picks("lunch", date(2026, 6, 18))
-    # Force the close_at into the past.
+    # Force the close_at into the past (tz-aware, matching how it's now stored).
     service.db.conn.execute(
         "UPDATE polls SET close_at = ? WHERE id = ?",
-        ((datetime.now() - timedelta(minutes=1)).isoformat(), poll_id),
+        ((service.config.now() - timedelta(minutes=1)).isoformat(), poll_id),
     )
     service.db.conn.commit()
     service.recover_open_polls()
     assert service.db.get_poll(poll_id)["closed"] == 1
+
+
+def test_close_at_is_timezone_aware(service):
+    """The close time handed to the scheduler must be tz-aware, so a host whose
+    system clock zone differs from TZ doesn't fire closes hours off."""
+    poll_id = service.post_picks("lunch", date(2026, 6, 18))
+    _, close_at = service._sched.scheduled[0]
+    assert close_at.tzinfo is not None
+    stored = service.db.get_poll(poll_id)["close_at"]
+    assert datetime.fromisoformat(stored).tzinfo is not None
+
+
+def test_pitch_cache_cleared_on_close(service):
+    poll_id = service.post_picks("lunch", date(2026, 6, 18))
+    assert poll_id in service._pitch_cache
+    service.close_poll(poll_id)
+    assert poll_id not in service._pitch_cache
+
+
+def test_recover_pending_ratings_prompts_overdue_winner(service):
+    """A poll that closed with a winner but never got its rating prompt (e.g. the
+    process restarted in the close->rate window) is prompted on recovery."""
+    poll_id = service.post_picks("lunch", date(2026, 6, 18))
+    cands = service.db.poll_candidates(service.db.get_poll(poll_id))
+    service.handle_vote(poll_id, "U1", cands[0])
+    service.close_poll(poll_id)
+    # Push close_at well into the past so close_at + rating delay is overdue.
+    service.db.conn.execute(
+        "UPDATE polls SET close_at = ? WHERE id = ?",
+        ((service.config.now() - timedelta(days=1)).isoformat(), poll_id),
+    )
+    service.db.conn.commit()
+    assert service.db.get_poll(poll_id)["rated"] == 0
+
+    sched = Scheduler(service.config)
+    sched.attach(service)
+    posted_before = len(service.slack.posted)
+    sched.recover_pending_ratings()
+
+    assert service.db.get_poll(poll_id)["rated"] == 1
+    new_posts = service.slack.posted[posted_before:]
+    assert any("How was" in p.get("text", "") for p in new_posts)

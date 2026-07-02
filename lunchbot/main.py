@@ -48,6 +48,7 @@ def main() -> None:
 
     scheduler.start()
     poll.recover_open_polls()  # restart recovery (spec section 12)
+    scheduler.recover_pending_ratings()  # re-arm rating prompts lost on restart
 
     handler = SocketModeHandler(app, config.slack_app_token)
 

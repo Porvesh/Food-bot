@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -189,6 +191,21 @@ class Config:
                 + ", ".join(missing)
                 + "\nCopy .env.example to .env and fill them in."
             )
+
+    @property
+    def tzinfo(self) -> ZoneInfo:
+        return ZoneInfo(self.tz)
+
+    def now(self) -> datetime:
+        """Current time in the configured timezone, timezone-aware.
+
+        Using this instead of a naive ``datetime.now()`` keeps poll close/rating
+        times consistent with the scheduler (created with ``timezone=tz``): a
+        naive datetime handed to APScheduler is read in the scheduler's zone, so
+        a host running in a different zone than ``TZ`` would otherwise fire jobs
+        hours off.
+        """
+        return datetime.now(self.tzinfo)
 
     @property
     def meal_names(self) -> set[str]:
