@@ -87,7 +87,7 @@ class PollService:
     # -- post ----------------------------------------------------------------
 
     def post_picks(self, slot: str, on_date: Optional[date] = None) -> Optional[int]:
-        on_date = on_date or date.today()
+        on_date = on_date or self.config.now().date()
         picks = self.select_candidates(slot, on_date)
         if len(picks) < 1:
             log.warning("No candidate places for %s; add some with /lunch add.", slot)
@@ -98,7 +98,7 @@ class PollService:
             return None
 
         candidate_ids = [s.place.id for s in picks]
-        close_at = datetime.now() + timedelta(minutes=self.config.poll_minutes)
+        close_at = self.config.now() + timedelta(minutes=self.config.poll_minutes)
         poll_id = self.db.create_poll(slot, on_date.isoformat(), candidate_ids, close_at.isoformat())
 
         cards = []
@@ -204,6 +204,9 @@ class PollService:
                 channel=self.config.channel_id,
                 text=f"Winner: {row['name']}{note}",
             )
+        # Live-render pitches are no longer needed once closed (re-renders fall
+        # back to _cached_pitch); drop them so the cache can't grow unbounded.
+        self._pitch_cache.pop(poll_id, None)
         log.info("Closed poll #%d, winner=%s", poll_id, winner_id)
 
     def _decide_winner(self, poll, tally: dict[int, int], candidates: list[int]) -> Optional[int]:
@@ -258,15 +261,23 @@ class PollService:
 
     def recover_open_polls(self) -> None:
         """On boot, close any polls whose window passed; re-schedule the rest."""
-        now = datetime.now()
+        now = self.config.now()
         for poll in self.db.open_polls():
-            close_at = datetime.fromisoformat(poll["close_at"]) if poll["close_at"] else now
+            close_at = self._parse_stored(poll["close_at"], default=now)
             if close_at <= now:
                 log.info("Recovery: closing overdue poll #%d", poll["id"])
                 self.close_poll(poll["id"])
             else:
                 log.info("Recovery: re-scheduling close for poll #%d at %s", poll["id"], close_at)
                 self.schedule_close(poll["id"], close_at)
+
+    def _parse_stored(self, stamp: Optional[str], *, default: datetime) -> datetime:
+        """Parse a stored ISO timestamp as timezone-aware. Rows written before
+        the tz-aware switch are naive; assume they're in the configured zone."""
+        if not stamp:
+            return default
+        dt = datetime.fromisoformat(stamp)
+        return dt if dt.tzinfo else dt.replace(tzinfo=self.config.tzinfo)
 
 
 def _cached_pitch(row) -> str:
