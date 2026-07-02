@@ -142,10 +142,10 @@ def test_rating_updates_place_aggregates(service):
 
 def test_recovery_closes_overdue_poll(service):
     poll_id = service.post_picks("lunch", date(2026, 6, 18))
-    # Force the close_at into the past.
+    # Force the close_at into the past (tz-aware, matching how it's now stored).
     service.db.conn.execute(
         "UPDATE polls SET close_at = ? WHERE id = ?",
-        ((datetime.now() - timedelta(minutes=1)).isoformat(), poll_id),
+        ((service.config.now() - timedelta(minutes=1)).isoformat(), poll_id),
     )
     service.db.conn.commit()
     service.recover_open_polls()
